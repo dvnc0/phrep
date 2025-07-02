@@ -26,10 +26,10 @@ struct Cli {
     #[arg(short, value_name = "FILE")]
     file: String,
 
-    /// Search class properties only (default is false)
-    #[arg(long, value_name = "PROPERTIES", default_value_t = false)]
-    #[arg(short, value_name = "PROPERTIES")]
-    properties: bool,
+    /// Mimic grep search (default is false)
+    #[arg(long, value_name = "GREP", default_value_t = false)]
+    #[arg(short, value_name = "GREP")]
+    grep: bool,
 }
 
 fn main() -> Result<()> {
@@ -39,8 +39,8 @@ fn main() -> Result<()> {
         return Err(anyhow::anyhow!("Query cannot be empty"));
     }
 
-    if args.properties {
-        println!("Searching for class properties matching: {}", args.query);
+    if args.grep {
+        grep_search(&args.query, &args.dir, &args.file)?;
     } else {
         basic_search(&args.query, &args.dir, &args.file)?;
     }
@@ -133,6 +133,46 @@ fn basic_search(query: &str, dir: &str, file: &str) -> Result<()> {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// Mimics grep search, searching for the query in all files
+fn grep_search(query: &str, dir: &str, file: &str) -> Result<()> {
+    let pattern = Regex::new(query);
+    if let Err(e) = pattern {
+        eprintln!("Invalid regex pattern: {}", e);
+        return Err(anyhow::anyhow!("Invalid regex pattern"));
+    }
+
+    for entry in WalkDir::new(dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("php"))
+        .filter(|e| e.file_name().to_string_lossy().contains(file)) {
+        
+        let path = entry.path();
+        if path.is_file() {
+            let content = std::fs::read_to_string(path)?;
+            for (i, line) in content.lines().enumerate() {
+                if pattern.clone()?.is_match(line) {
+                    let mut filename = path.display().to_string();
+                    if let Some(home_dir) = home_dir() {
+                        if let Some(home_dir_str) = home_dir.to_str() {
+                            if filename.starts_with(home_dir_str) {
+                                filename = filename.replace(home_dir_str, "~");
+                            }
+                        }
+                    }
+                    if filename.starts_with("./") {
+                        filename = filename[2..].to_string();
+                    }
+                    let file_name_styled = filename.bold().blue();
+                    println!("{}:{} → {}", file_name_styled, i + 1, line.trim());
                 }
             }
         }
