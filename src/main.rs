@@ -44,7 +44,7 @@ fn main() -> Result<()> {
         return Err(anyhow::anyhow!("Query cannot be empty"));
     }
 
-    if (args.grep && args.method_search) {
+    if args.grep && args.method_search {
         eprintln!("Error: Cannot use both --grep and --method-search at the same time.");
         return Err(anyhow::anyhow!("Cannot use both --grep and --method-search at the same time"));
     }
