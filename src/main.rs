@@ -37,8 +37,39 @@ struct Cli {
     method_search: bool,
 }
 
+#[derive(Debug)]
+enum SearchMode {
+    Basic,
+    Grep,
+    MethodSearch,
+}
+
+impl From<&Cli> for SearchMode {
+    fn from(args: &Cli) -> Self {
+        if args.grep {
+            SearchMode::Grep
+        } else if args.method_search {
+            SearchMode::MethodSearch
+        } else {
+            SearchMode::Basic
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let args: Cli = Cli::parse();
+    
+    validate_args(&args)?;
+
+    let search_mode = SearchMode::from(&args);
+
+    search(&args.query, &args.dir, &args.file, search_mode)?;
+
+    println!("Search completed successfully.");
+    Ok(())
+}
+
+fn validate_args(args: &Cli) -> Result<()> {
     if args.query.is_empty() {
         eprintln!("Error: Query cannot be empty.");
         return Err(anyhow::anyhow!("Query cannot be empty"));
@@ -49,19 +80,81 @@ fn main() -> Result<()> {
         return Err(anyhow::anyhow!("Cannot use both --grep and --method-search at the same time"));
     }
 
-    if args.grep {
-        grep_search(&args.query, &args.dir, &args.file)?;
-    } else if args.method_search {
-        if args.query.contains('(') || args.query.contains(')') {
-            eprintln!("Error: Method search does not support parentheses in the query.");
-            return Err(anyhow::anyhow!("Method search does not support parentheses in the query"));
+    Ok(())
+}
+
+fn search(query: &str, dir: &str, file: &str, mode: SearchMode) -> Result<()> {
+    match mode {
+        SearchMode::Basic => basic_search(query, dir, file),
+        SearchMode::Grep => grep_search(query, dir, file),
+        SearchMode::MethodSearch => method_search(query, dir, file),
+    }
+}
+
+fn format_filename(path: &std::path::Path) -> String {
+    let mut filename = path.display().to_string();
+    if let Some(home_dir) = home_dir() {
+        if let Some(home_dir_str) = home_dir.to_str() {
+            if filename.starts_with(home_dir_str) {
+                filename = filename.replace(home_dir_str, "~");
+            }
         }
-        method_search(&args.query, &args.dir, &args.file)?;
-    } else {
-        basic_search(&args.query, &args.dir, &args.file)?;
+    }
+    if filename.starts_with("./") {
+        filename = filename[2..].to_string();
     }
 
-    println!("Search completed successfully.");
+    filename
+}
+
+fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitterParser, path: &std::path::Path) -> Result<()> {
+    let tree = parser.parse(&content, None).unwrap();
+    let root_node = tree.root_node();
+    for node in root_node.children(&mut tree.walk()) {
+        if node.kind() == "class_declaration" {
+            let class_body = node.child_by_field_name("body");
+            let cursor = class_body.unwrap();
+            for method in class_body.unwrap().named_children(&mut cursor.walk()) {
+                if method.kind() == "method_declaration" || method.kind() == "function_declaration" {
+                    let name_node = method.child_by_field_name("name");
+                    let body_node = method.child_by_field_name("body");
+                    if let (Some(name_node), Some(body_node)) = (name_node, body_node) {
+                        let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+
+                        let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
+                        let start_row = body_node.start_position().row;
+                        for (i, line) in body_text.lines().enumerate() {
+                            if pattern.clone().is_match(line) {
+                                let filename = format_filename(path);
+                                let file_name_styled = filename.bold().blue();
+                                let func_name_styled = func_name.bold().yellow();
+
+                                println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line.trim());
+                            }
+                        }
+                    }
+                }
+            }
+        } else if node.kind() == "function_declaration" {
+            let name_node = node.child_by_field_name("name");
+            let body_node = node.child_by_field_name("body");
+            if let (Some(name_node), Some(body_node)) = (name_node, body_node) {
+                let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+
+                let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
+                let start_row = body_node.start_position().row;
+                for (i, line) in body_text.lines().enumerate() {
+                    if pattern.clone().is_match(line) {
+                        let filename = format_filename(path);
+                        let file_name_styled = filename.bold().blue();
+                        let func_name_styled = func_name.bold().yellow();
+
+                        println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line.trim());
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -84,73 +177,8 @@ fn basic_search(query: &str, dir: &str, file: &str) -> Result<()> {
         let path = entry.path();
         if path.is_file() {
             let content = std::fs::read_to_string(path)?;
-            let tree = parser.parse(&content, None).unwrap();
-            let root_node = tree.root_node();
-            for node in root_node.children(&mut tree.walk()) {
-                if node.kind() == "class_declaration" {
-                    let class_body = node.child_by_field_name("body");
-                    let cursor = class_body.unwrap();
-                    for method in class_body.unwrap().named_children(&mut cursor.walk()) {
-                        if method.kind() == "method_declaration" || method.kind() == "function_declaration" {
-                            let name_node = method.child_by_field_name("name");
-                            let body_node = method.child_by_field_name("body");
-                            if let (Some(name_node), Some(body_node)) = (name_node, body_node) {
-                                let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
-
-                                let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
-                                let start_row = body_node.start_position().row;
-                                for (i, line) in body_text.lines().enumerate() {
-                                    if pattern.clone()?.is_match(line) {
-                                        let mut filename = path.display().to_string();
-                                        if let Some(home_dir) = home_dir() {
-                                            if let Some(home_dir_str) = home_dir.to_str() {
-                                                if filename.starts_with(home_dir_str) {
-                                                    filename = filename.replace(home_dir_str, "~");
-                                                }
-                                            }
-                                        }
-                                        if filename.starts_with("./") {
-                                            filename = filename[2..].to_string();
-                                        }
-                                        let file_name_styled = filename.bold().blue();
-                                        let func_name_styled = func_name.bold().yellow();
-
-                                        println!("{}: {}():{} → {}", file_name_styled, func_name_styled, start_row + i + 1, line.trim());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if node.kind() == "function_declaration" {
-                    let name_node = node.child_by_field_name("name");
-                    let body_node = node.child_by_field_name("body");
-                    if let (Some(name_node), Some(body_node)) = (name_node, body_node) {
-                        let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
-
-                        let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
-                        let start_row = body_node.start_position().row;
-                        for (i, line) in body_text.lines().enumerate() {
-                            if pattern.clone()?.is_match(line) {
-                                let mut filename = path.display().to_string();
-                                if let Some(home_dir) = home_dir() {
-                                    if let Some(home_dir_str) = home_dir.to_str() {
-                                        if filename.starts_with(home_dir_str) {
-                                            filename = filename.replace(home_dir_str, "~");
-                                        }
-                                    }
-                                }
-                                if filename.starts_with("./") {
-                                    filename = filename[2..].to_string();
-                                }
-                                let file_name_styled = filename.bold().blue();
-                                let func_name_styled = func_name.bold().yellow();
-
-                                println!("{}: {}():{} → {}", file_name_styled, func_name_styled, start_row + i + 1, line.trim());
-                            }
-                        }
-                    }
-                }
-            }
+            let reg_pattern = &pattern.clone().unwrap();
+            search_in_function_body(&content, &reg_pattern, &mut parser, &path)?;
         }
     }
 
@@ -193,21 +221,28 @@ fn method_search(query: &str, dir: &str, file: &str) -> Result<()> {
                                     let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
                                     let start_row = body_node.start_position().row;
                                     if func_name.contains(query) {
-                                        let mut filename = path.display().to_string();
-                                        if let Some(home_dir) = home_dir() {
-                                            if let Some(home_dir_str) = home_dir.to_str() {
-                                                if filename.starts_with(home_dir_str) {
-                                                    filename = filename.replace(home_dir_str, "~");
-                                                }
-                                            }
-                                        }
-                                        if filename.starts_with("./") {
-                                            filename = filename[2..].to_string();
-                                        }
+                                        let filename = format_filename(path);
                                         let file_name_styled = filename.bold().blue();
                                         let func_name_styled = func_name.bold().yellow();
+                                       
+                                        let params = method.child_by_field_name("parameters");
+                                        let params_text = if let Some(params) = params {
+                                            params.utf8_text(content.as_bytes()).unwrap_or("")
+                                        } else {
+                                            ""
+                                        };
+                                        let params_styled = params_text.bold().green();
 
-                                        println!("{}: {}():{} → {}", file_name_styled, func_name_styled, start_row + 1, body_text.trim());
+                                        let return_type = method.child_by_field_name("return_type");
+                                        let return_type_text = if let Some(return_type) = return_type {
+                                            return_type.utf8_text(content.as_bytes()).unwrap_or("")
+                                        } else {
+                                            ""
+                                        };
+                                        let return_type_styled = return_type_text.bold().magenta();
+
+                                        println!("{}:{}: {}{}:{} → {}", file_name_styled, start_row + 1, func_name_styled, params_styled, return_type_styled, body_text.trim());
+
                                     }
                                 }
                             }
@@ -238,20 +273,10 @@ fn grep_search(query: &str, dir: &str, file: &str) -> Result<()> {
         let path = entry.path();
         if path.is_file() {
             let content = std::fs::read_to_string(path)?;
+            let filename = format_filename(path);
+            let file_name_styled = filename.bold().blue();
             for (i, line) in content.lines().enumerate() {
                 if pattern.clone()?.is_match(line) {
-                    let mut filename = path.display().to_string();
-                    if let Some(home_dir) = home_dir() {
-                        if let Some(home_dir_str) = home_dir.to_str() {
-                            if filename.starts_with(home_dir_str) {
-                                filename = filename.replace(home_dir_str, "~");
-                            }
-                        }
-                    }
-                    if filename.starts_with("./") {
-                        filename = filename[2..].to_string();
-                    }
-                    let file_name_styled = filename.bold().blue();
                     println!("{}:{} → {}", file_name_styled, i + 1, line.trim());
                 }
             }
