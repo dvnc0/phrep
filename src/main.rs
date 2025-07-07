@@ -17,28 +17,23 @@ struct Cli {
     /// Search query
     query: String,
     /// Directory to search recursively (default is current directory)
-    #[arg(long, value_name = "DIR", default_value = ".")]
-    #[arg(short, value_name = "DIR")]
+    #[arg(long, short, value_name = "DIR", default_value = ".")]
     dir:String,
 
     /// File to search (default is all .php files)
-    #[arg(long, value_name = "FILE", default_value = ".php")]
-    #[arg(short, value_name = "FILE")]
+    #[arg(long, short, value_name = "FILE", default_value = ".php")]
     file: String,
 
     /// Print full method body in basic search
-    #[arg(long, value_name = "PRINT_METHOD", default_value_t = false)]
-    #[arg(short, value_name = "PRINT_METHOD")]
+    #[arg(long, short, value_name = "PRINT_METHOD", default_value_t = false, conflicts_with_all = ["grep", "method_search"])]
     print_method: bool,
 
     /// Mimic grep search (default is false)
-    #[arg(long, value_name = "GREP", default_value_t = false)]
-    #[arg(short, value_name = "GREP")]
+    #[arg(long, short, value_name = "GREP", default_value_t = false)]
     grep: bool,
 
     /// Return the entire method if method name matches the query
-    #[arg(long, value_name = "METHOD_SEARCH", default_value_t = false)]
-    #[arg(short, value_name = "METHOD_SEARCH")]
+    #[arg(long, short, value_name = "METHOD_SEARCH", default_value_t = false, conflicts_with_all = ["grep", "print_method"])]
     method_search: bool,
 }
 
