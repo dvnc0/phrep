@@ -12,7 +12,7 @@ unsafe extern "C" { fn tree_sitter_php() -> Language; }
 /// Search PHP code for strings inside functions and classes
 #[derive(Parser, Debug)]
 #[command(name = "phrep")]
-#[command(about = "Grep style search inside PHP functions/methods.", version)]
+#[command(about = "Grep style search inside PHP functions/methods. Basic search searches within methods and returns line and method information", version)]
 struct Cli {
     /// Search query
     query: String,
@@ -25,6 +25,11 @@ struct Cli {
     #[arg(long, value_name = "FILE", default_value = ".php")]
     #[arg(short, value_name = "FILE")]
     file: String,
+
+    /// Print full method body in basic search
+    #[arg(long, value_name = "PRINT_METHOD", default_value_t = false)]
+    #[arg(short, value_name = "PRINT_METHOD")]
+    print_method: bool,
 
     /// Mimic grep search (default is false)
     #[arg(long, value_name = "GREP", default_value_t = false)]
@@ -63,7 +68,7 @@ fn main() -> Result<()> {
 
     let search_mode = SearchMode::from(&args);
 
-    search(&args.query, &args.dir, &args.file, search_mode)?;
+    search(&args.query, &args.dir, &args.file, search_mode, &args.print_method)?;
 
     println!("Search completed successfully.");
     Ok(())
@@ -83,9 +88,9 @@ fn validate_args(args: &Cli) -> Result<()> {
     Ok(())
 }
 
-fn search(query: &str, dir: &str, file: &str, mode: SearchMode) -> Result<()> {
+fn search(query: &str, dir: &str, file: &str, mode: SearchMode, print_method: &bool) -> Result<()> {
     match mode {
-        SearchMode::Basic => basic_search(query, dir, file),
+        SearchMode::Basic => basic_search(query, dir, file, print_method),
         SearchMode::Grep => grep_search(query, dir, file),
         SearchMode::MethodSearch => method_search(query, dir, file),
     }
@@ -107,7 +112,7 @@ fn format_filename(path: &std::path::Path) -> String {
     filename
 }
 
-fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitterParser, path: &std::path::Path) -> Result<()> {
+fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitterParser, path: &std::path::Path, print_method: &bool) -> Result<()> {
     let tree = parser.parse(&content, None).unwrap();
     let root_node = tree.root_node();
     for node in root_node.children(&mut tree.walk()) {
@@ -129,7 +134,11 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
                                 let file_name_styled = filename.bold().blue();
                                 let func_name_styled = func_name.bold().yellow();
 
-                                println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line.trim());
+                                if *print_method {
+                                    println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text.trim());
+                                } else {
+                                    println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line.trim());
+                                }
                             }
                         }
                     }
@@ -159,7 +168,7 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
 }
 
 // Just a basic search that searches within methods in a class
-fn basic_search(query: &str, dir: &str, file: &str) -> Result<()> {
+fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool) -> Result<()> {
     let pattern = Regex::new(query);
     let mut parser = TreeSitterParser::new();
     parser.set_language(unsafe { tree_sitter_php() })?;
@@ -178,7 +187,7 @@ fn basic_search(query: &str, dir: &str, file: &str) -> Result<()> {
         if path.is_file() {
             let content = std::fs::read_to_string(path)?;
             let reg_pattern = &pattern.clone().unwrap();
-            search_in_function_body(&content, &reg_pattern, &mut parser, &path)?;
+            search_in_function_body(&content, &reg_pattern, &mut parser, &path, print_method)?;
         }
     }
 
