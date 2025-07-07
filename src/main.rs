@@ -36,7 +36,7 @@ struct Cli {
     #[arg(short, value_name = "GREP")]
     grep: bool,
 
-    /// Return the entire method if name matches the query
+    /// Return the entire method if method name matches the query
     #[arg(long, value_name = "METHOD_SEARCH", default_value_t = false)]
     #[arg(short, value_name = "METHOD_SEARCH")]
     method_search: bool,
@@ -135,9 +135,11 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
                                 let func_name_styled = func_name.bold().yellow();
 
                                 if *print_method {
-                                    println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text.trim());
+                                    let body_text_styled = body_text.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
+                                    println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text_styled.trim());
                                 } else {
-                                    println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line.trim());
+                                    let line_styled = line.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
+                                    println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line_styled.trim());
                                 }
                             }
                         }
@@ -286,7 +288,9 @@ fn grep_search(query: &str, dir: &str, file: &str) -> Result<()> {
             let file_name_styled = filename.bold().blue();
             for (i, line) in content.lines().enumerate() {
                 if pattern.clone()?.is_match(line) {
-                    println!("{}:{} → {}", file_name_styled, i + 1, line.trim());
+                    let pattern_text = pattern.clone().unwrap();
+                    let line_styled = line.replace(pattern_text.as_str(), &format!("{}", pattern_text.as_str().bold().red()));
+                    println!("{}:{} → {}", file_name_styled, i + 1, line_styled.trim());
                 }
             }
         }
