@@ -110,6 +110,8 @@ fn format_filename(path: &std::path::Path) -> String {
 fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitterParser, path: &std::path::Path, print_method: &bool) -> Result<()> {
     let tree = parser.parse(&content, None).unwrap();
     let root_node = tree.root_node();
+    
+    // Handle class methods manually (keep existing logic)
     for node in root_node.children(&mut tree.walk()) {
         if node.kind() == "class_declaration" {
             let class_body = node.child_by_field_name("body");
@@ -124,7 +126,7 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
                         let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
                         let start_row = body_node.start_position().row;
                         for (i, line) in body_text.lines().enumerate() {
-                            if pattern.clone().is_match(line) {
+                            if pattern.is_match(line) {
                                 let filename = format_filename(path);
                                 let file_name_styled = filename.bold().blue();
                                 let func_name_styled = func_name.bold().yellow();
@@ -141,30 +143,53 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
                     }
                 }
             }
-        } else if node.kind() == "function_declaration" {
-            let name_node = node.child_by_field_name("name");
-            let body_node = node.child_by_field_name("body");
-            if let (Some(name_node), Some(body_node)) = (name_node, body_node) {
-                let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+        }
+    }
+    
+    // Now recursively find all function_definition nodes (including nested ones)
+    search_in_all_functions(&root_node, content, pattern, path, print_method)?;
+    
+    Ok(())
+}
 
+// Recursive function to search inside all function_definition nodes regardless of nesting
+fn search_in_all_functions(node: &tree_sitter::Node, content: &str, pattern: &Regex, path: &std::path::Path, print_method: &bool) -> Result<()> {
+    if node.kind() == "function_definition" {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+            
+            if let Some(body_node) = node.child_by_field_name("body") {
                 let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
                 let start_row = body_node.start_position().row;
+                
                 for (i, line) in body_text.lines().enumerate() {
-                    if pattern.clone().is_match(line) {
+                    if pattern.is_match(line) {
                         let filename = format_filename(path);
                         let file_name_styled = filename.bold().blue();
                         let func_name_styled = func_name.bold().yellow();
 
-                        println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line.trim());
+                        if *print_method {
+                            let body_text_styled = body_text.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
+                            println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text_styled.trim());
+                        } else {
+                            let line_styled = line.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
+                            println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line_styled.trim());
+                        }
                     }
                 }
             }
         }
     }
+    
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        search_in_all_functions(&child, content, pattern, path, print_method)?;
+    }
+    
     Ok(())
 }
 
-// Just a basic search that searches within methods in a class
+// Updated basic_search with early string filtering for performance
 fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool) -> Result<()> {
     let pattern = Regex::new(query);
     let mut parser = TreeSitterParser::new();
@@ -183,6 +208,11 @@ fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool) -> Resu
         let path = entry.path();
         if path.is_file() {
             let content = std::fs::read_to_string(path)?;
+            
+            if !content.contains(query) {
+                continue;
+            }
+            
             let reg_pattern = &pattern.clone().unwrap();
             search_in_function_body(&content, &reg_pattern, &mut parser, &path, print_method)?;
         }
@@ -209,56 +239,110 @@ fn method_search(query: &str, dir: &str, file: &str) -> Result<()> {
         .filter(|e| e.file_name().to_string_lossy().contains(file)) {
 
         let path = entry.path();
-            if path.is_file() {
-                let content = std::fs::read_to_string(path)?;
-                let tree = parser.parse(&content, None).unwrap();
-                let root_node = tree.root_node();
-                for node in root_node.children(&mut tree.walk()) {
-                    if node.kind() == "class_declaration" {
-                        let class_body = node.child_by_field_name("body");
-                        let cursor = class_body.unwrap();
-                        for method in class_body.unwrap().named_children(&mut cursor.walk()) {
-                            if method.kind() == "method_declaration" || method.kind() == "function_declaration" {
-                                let name_node = method.child_by_field_name("name");
-                                let body_node = method.child_by_field_name("body");
-                                if let (Some(name_node), Some(body_node)) = (name_node, body_node) {
-                                    let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+        if path.is_file() {
+            let content = std::fs::read_to_string(path)?;
+            
+            if !content.contains(query) {
+                continue;
+            }
+            
+            let tree = parser.parse(&content, None).unwrap();
+            let root_node = tree.root_node();
+            
+            for node in root_node.children(&mut tree.walk()) {
+                if node.kind() == "class_declaration" {
+                    let class_body = node.child_by_field_name("body");
+                    let cursor = class_body.unwrap();
+                    for method in class_body.unwrap().named_children(&mut cursor.walk()) {
+                        if method.kind() == "method_declaration" || method.kind() == "function_declaration" {
+                            let name_node = method.child_by_field_name("name");
+                            let body_node = method.child_by_field_name("body");
+                            if let (Some(name_node), Some(body_node)) = (name_node, body_node) {
+                                let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
 
-                                    let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
-                                    let start_row = body_node.start_position().row;
-                                    if func_name.contains(query) {
-                                        let filename = format_filename(path);
-                                        let file_name_styled = filename.bold().blue();
-                                        let func_name_styled = func_name.bold().yellow();
-                                       
-                                        let params = method.child_by_field_name("parameters");
-                                        let params_text = if let Some(params) = params {
-                                            params.utf8_text(content.as_bytes()).unwrap_or("")
-                                        } else {
-                                            ""
-                                        };
-                                        let params_styled = params_text.bold().green();
+                                let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
+                                let start_row = body_node.start_position().row;
+                                if func_name.contains(query) {
+                                    let filename = format_filename(path);
+                                    let file_name_styled = filename.bold().blue();
+                                    let func_name_styled = func_name.bold().yellow();
+                                   
+                                    let params = method.child_by_field_name("parameters");
+                                    let params_text = if let Some(params) = params {
+                                        params.utf8_text(content.as_bytes()).unwrap_or("")
+                                    } else {
+                                        ""
+                                    };
+                                    let params_styled = params_text.bold().green();
 
-                                        let return_type = method.child_by_field_name("return_type");
-                                        let return_type_text = if let Some(return_type) = return_type {
-                                            return_type.utf8_text(content.as_bytes()).unwrap_or("")
-                                        } else {
-                                            ""
-                                        };
-                                        let return_type_styled = return_type_text.bold().magenta();
+                                    let return_type = method.child_by_field_name("return_type");
+                                    let return_type_text = if let Some(return_type) = return_type {
+                                        return_type.utf8_text(content.as_bytes()).unwrap_or("")
+                                    } else {
+                                        ""
+                                    };
+                                    let return_type_styled = return_type_text.bold().magenta();
 
-                                        println!("{}:{}: {}{}:{} → {}", file_name_styled, start_row + 1, func_name_styled, params_styled, return_type_styled, body_text.trim());
-
-                                    }
+                                    println!("{}:{}: {}{}:{} → {}", file_name_styled, start_row + 1, func_name_styled, params_styled, return_type_styled, body_text.trim());
                                 }
                             }
                         }
                     }
                 }
             }
+            
+            find_all_functions(&root_node, &content, query, path)?;
         }
+    }
 
+    Ok(())
+}
 
+// Recursive function to find all function_definition nodes regardless of nesting
+fn find_all_functions(node: &tree_sitter::Node, content: &str, query: &str, path: &std::path::Path) -> Result<()> {
+    // Check if this node is a function_definition
+    if node.kind() == "function_definition" {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+            
+            if func_name.contains(query) {
+                let filename = format_filename(path);
+                let file_name_styled = filename.bold().blue();
+                let func_name_styled = func_name.bold().yellow();
+                
+                let params_text = node.child_by_field_name("parameters")
+                    .map(|p| p.utf8_text(content.as_bytes()).unwrap_or(""))
+                    .unwrap_or("");
+                let params_styled = params_text.bold().green();
+
+                let return_type_text = node.child_by_field_name("return_type")
+                    .map(|r| r.utf8_text(content.as_bytes()).unwrap_or(""))
+                    .unwrap_or("");
+                let return_type_styled = return_type_text.bold().magenta();
+
+                let body_text = node.child_by_field_name("body")
+                    .map(|b| b.utf8_text(content.as_bytes()).unwrap_or(""))
+                    .unwrap_or("");
+                let start_row = node.start_position().row;
+
+                println!("{}:{}: {}{}:{} → {}", 
+                    file_name_styled, 
+                    start_row + 1, 
+                    func_name_styled, 
+                    params_styled, 
+                    return_type_styled, 
+                    body_text.trim()
+                );
+            }
+        }
+    }
+    
+    // Recursively check all child nodes
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        find_all_functions(&child, content, query, path)?;
+    }
+    
     Ok(())
 }
 
