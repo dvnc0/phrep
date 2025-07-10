@@ -108,7 +108,12 @@ fn format_filename(path: &std::path::Path) -> String {
 }
 
 fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitterParser, path: &std::path::Path, print_method: &bool) -> Result<()> {
-    let tree = parser.parse(&content, None).unwrap();
+    let tree = match parser.parse(&content, None) {
+        Some(tree) => tree,
+        None => {
+            return Err(anyhow::anyhow!("Could not parse content as PHP"));
+        }
+    };
     let root_node = tree.root_node();
     
     // Handle class methods manually (keep existing logic)
@@ -121,9 +126,21 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
                     let name_node = method.child_by_field_name("name");
                     let body_node = method.child_by_field_name("body");
                     if let (Some(name_node), Some(body_node)) = (name_node, body_node) {
-                        let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+                        let func_name = match name_node.utf8_text(content.as_bytes()) {
+                            Ok(name) => name,
+                            Err(_) => {
+                                eprintln!("Warning: Invalid UTF-8 in function name in file '{}'", path.display());
+                                continue;
+                            }
+                        };
 
-                        let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
+                        let body_text = match body_node.utf8_text(content.as_bytes()) {
+                            Ok(text) => text,
+                            Err(_) => {
+                                eprintln!("Warning: Invalid UTF-8 in function body in file '{}'", path.display());
+                                continue;
+                            }
+                        };
                         let start_row = body_node.start_position().row;
                         for (i, line) in body_text.lines().enumerate() {
                             if pattern.is_match(line) {
@@ -132,11 +149,19 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
                                 let func_name_styled = func_name.bold().yellow();
 
                                 if *print_method {
-                                    let body_text_styled = body_text.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
-                                    println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text_styled.trim());
+                                    if let Some(_pattern_str) = pattern.as_str().chars().next() {
+                                        let body_text_styled = body_text.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
+                                        println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text_styled.trim());
+                                    } else {
+                                        println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text.trim());
+                                    }
                                 } else {
-                                    let line_styled = line.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
-                                    println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line_styled.trim());
+                                    if let Some(_pattern_str) = pattern.as_str().chars().next() {
+                                        let line_styled = line.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
+                                        println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line_styled.trim());
+                                    } else {
+                                        println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line.trim());
+                                    }
                                 }
                             }
                         }
@@ -156,10 +181,22 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
 fn search_in_all_functions(node: &tree_sitter::Node, content: &str, pattern: &Regex, path: &std::path::Path, print_method: &bool) -> Result<()> {
     if node.kind() == "function_definition" {
         if let Some(name_node) = node.child_by_field_name("name") {
-            let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+            let func_name = match name_node.utf8_text(content.as_bytes()) {
+                Ok(name) => name,
+                Err(_) => {
+                    eprintln!("Warning: Invalid UTF-8 in function name in file '{}'", path.display());
+                    return Ok(());
+                }
+            };
             
             if let Some(body_node) = node.child_by_field_name("body") {
-                let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
+                let body_text = match body_node.utf8_text(content.as_bytes()) {
+                    Ok(text) => text,
+                    Err(_) => {
+                        eprintln!("Warning: Invalid UTF-8 in function body in file '{}'", path.display());
+                        return Ok(());
+                    }
+                };
                 let start_row = body_node.start_position().row;
                 
                 for (i, line) in body_text.lines().enumerate() {
@@ -169,11 +206,19 @@ fn search_in_all_functions(node: &tree_sitter::Node, content: &str, pattern: &Re
                         let func_name_styled = func_name.bold().yellow();
 
                         if *print_method {
-                            let body_text_styled = body_text.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
-                            println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text_styled.trim());
+                            if let Some(_pattern_str) = pattern.as_str().chars().next() {
+                                let body_text_styled = body_text.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
+                                println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text_styled.trim());
+                            } else {
+                                println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, body_text.trim());
+                            }
                         } else {
-                            let line_styled = line.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
-                            println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line_styled.trim());
+                            if let Some(_pattern_str) = pattern.as_str().chars().next() {
+                                let line_styled = line.replace(pattern.as_str(), &format!("{}", pattern.as_str().bold().red()));
+                                println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line_styled.trim());
+                            } else {
+                                println!("{}:{}: {}() → {}", file_name_styled, start_row + i + 1, func_name_styled, line.trim());
+                            }
                         }
                     }
                 }
@@ -207,14 +252,23 @@ fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool) -> Resu
         
         let path = entry.path();
         if path.is_file() {
-            let content = std::fs::read_to_string(path)?;
+            let content = match std::fs::read_to_string(path) {
+                Ok(content) => content,
+                Err(e) => {
+                    eprintln!("Warning: Could not read file '{}': {}", path.display(), e);
+                    continue;
+                }
+            };
             
             if !content.contains(query) {
                 continue;
             }
             
             let reg_pattern = &pattern.clone().unwrap();
-            search_in_function_body(&content, &reg_pattern, &mut parser, &path, print_method)?;
+            if let Err(e) = search_in_function_body(&content, &reg_pattern, &mut parser, &path, print_method) {
+                eprintln!("Warning: Error processing file '{}': {}", path.display(), e);
+                continue;
+            }
         }
     }
 
@@ -240,13 +294,25 @@ fn method_search(query: &str, dir: &str, file: &str) -> Result<()> {
 
         let path = entry.path();
         if path.is_file() {
-            let content = std::fs::read_to_string(path)?;
+            let content = match std::fs::read_to_string(path) {
+                Ok(content) => content,
+                Err(e) => {
+                    eprintln!("Warning: Could not read file '{}': {}", path.display(), e);
+                    continue;
+                }
+            };
             
             if !content.contains(query) {
                 continue;
             }
             
-            let tree = parser.parse(&content, None).unwrap();
+            let tree = match parser.parse(&content, None) {
+                Some(tree) => tree,
+                None => {
+                    eprintln!("Warning: Could not parse file '{}' as PHP", path.display());
+                    continue;
+                }
+            };
             let root_node = tree.root_node();
             
             for node in root_node.children(&mut tree.walk()) {
@@ -258,29 +324,35 @@ fn method_search(query: &str, dir: &str, file: &str) -> Result<()> {
                             let name_node = method.child_by_field_name("name");
                             let body_node = method.child_by_field_name("body");
                             if let (Some(name_node), Some(body_node)) = (name_node, body_node) {
-                                let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+                                let func_name = match name_node.utf8_text(content.as_bytes()) {
+                                    Ok(name) => name,
+                                    Err(_) => {
+                                        eprintln!("Warning: Invalid UTF-8 in method name in file '{}'", path.display());
+                                        continue;
+                                    }
+                                };
 
-                                let body_text = body_node.utf8_text(content.as_bytes()).unwrap_or("");
+                                let body_text = match body_node.utf8_text(content.as_bytes()) {
+                                    Ok(text) => text,
+                                    Err(_) => {
+                                        eprintln!("Warning: Invalid UTF-8 in method body in file '{}'", path.display());
+                                        continue;
+                                    }
+                                };
                                 let start_row = body_node.start_position().row;
                                 if func_name.contains(query) {
                                     let filename = format_filename(path);
                                     let file_name_styled = filename.bold().blue();
                                     let func_name_styled = func_name.bold().yellow();
                                    
-                                    let params = method.child_by_field_name("parameters");
-                                    let params_text = if let Some(params) = params {
-                                        params.utf8_text(content.as_bytes()).unwrap_or("")
-                                    } else {
-                                        ""
-                                    };
+                                    let params_text = method.child_by_field_name("parameters")
+                                        .and_then(|p| p.utf8_text(content.as_bytes()).ok())
+                                        .unwrap_or("");
                                     let params_styled = params_text.bold().green();
 
-                                    let return_type = method.child_by_field_name("return_type");
-                                    let return_type_text = if let Some(return_type) = return_type {
-                                        return_type.utf8_text(content.as_bytes()).unwrap_or("")
-                                    } else {
-                                        ""
-                                    };
+                                    let return_type_text = method.child_by_field_name("return_type")
+                                        .and_then(|r| r.utf8_text(content.as_bytes()).ok())
+                                        .unwrap_or("");
                                     let return_type_styled = return_type_text.bold().magenta();
 
                                     println!("{}:{}: {}{}:{} → {}", file_name_styled, start_row + 1, func_name_styled, params_styled, return_type_styled, body_text.trim());
@@ -291,7 +363,10 @@ fn method_search(query: &str, dir: &str, file: &str) -> Result<()> {
                 }
             }
             
-            find_all_functions(&root_node, &content, query, path)?;
+            if let Err(e) = find_all_functions(&root_node, &content, query, path) {
+                eprintln!("Warning: Error processing functions in file '{}': {}", path.display(), e);
+                continue;
+            }
         }
     }
 
@@ -303,7 +378,13 @@ fn find_all_functions(node: &tree_sitter::Node, content: &str, query: &str, path
     // Check if this node is a function_definition
     if node.kind() == "function_definition" {
         if let Some(name_node) = node.child_by_field_name("name") {
-            let func_name = name_node.utf8_text(content.as_bytes()).unwrap_or("unknown");
+            let func_name = match name_node.utf8_text(content.as_bytes()) {
+                Ok(name) => name,
+                Err(_) => {
+                    eprintln!("Warning: Invalid UTF-8 in function name in file '{}'", path.display());
+                    return Ok(());
+                }
+            };
             
             if func_name.contains(query) {
                 let filename = format_filename(path);
@@ -311,17 +392,17 @@ fn find_all_functions(node: &tree_sitter::Node, content: &str, query: &str, path
                 let func_name_styled = func_name.bold().yellow();
                 
                 let params_text = node.child_by_field_name("parameters")
-                    .map(|p| p.utf8_text(content.as_bytes()).unwrap_or(""))
+                    .and_then(|p| p.utf8_text(content.as_bytes()).ok())
                     .unwrap_or("");
                 let params_styled = params_text.bold().green();
 
                 let return_type_text = node.child_by_field_name("return_type")
-                    .map(|r| r.utf8_text(content.as_bytes()).unwrap_or(""))
+                    .and_then(|r| r.utf8_text(content.as_bytes()).ok())
                     .unwrap_or("");
                 let return_type_styled = return_type_text.bold().magenta();
 
                 let body_text = node.child_by_field_name("body")
-                    .map(|b| b.utf8_text(content.as_bytes()).unwrap_or(""))
+                    .and_then(|b| b.utf8_text(content.as_bytes()).ok())
                     .unwrap_or("");
                 let start_row = node.start_position().row;
 
@@ -362,13 +443,19 @@ fn grep_search(query: &str, dir: &str, file: &str) -> Result<()> {
         
         let path = entry.path();
         if path.is_file() {
-            let content = std::fs::read_to_string(path)?;
+            let content = match std::fs::read_to_string(path) {
+                Ok(content) => content,
+                Err(e) => {
+                    eprintln!("Warning: Could not read file '{}': {}", path.display(), e);
+                    continue;
+                }
+            };
             let filename = format_filename(path);
             let file_name_styled = filename.bold().blue();
             for (i, line) in content.lines().enumerate() {
-                if pattern.clone()?.is_match(line) {
-                    let pattern_text = pattern.clone().unwrap();
-                    let line_styled = line.replace(pattern_text.as_str(), &format!("{}", pattern_text.as_str().bold().red()));
+                if pattern.clone().unwrap().is_match(line) {
+                    let pattern_ref = pattern.clone().unwrap();
+                    let line_styled = line.replace(pattern_ref.as_str(), &format!("{}", pattern_ref.as_str().bold().red()));
                     println!("{}:{} → {}", file_name_styled, i + 1, line_styled.trim());
                 }
             }
