@@ -84,7 +84,6 @@ fn validate_args(args: &Cli) -> Result<()> {
         return Err(anyhow::anyhow!("Cannot use both --grep and --method-search at the same time"));
     }
 
-    // make sure exclude_dirs is a valid comma-separated list
     if !args.exclude_dirs.is_empty() {
         let dirs: Vec<&str> = args.exclude_dirs.split(',').collect();
         if dirs.is_empty() || dirs.iter().any(|d| d.trim().is_empty()) {
@@ -129,7 +128,6 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
     };
     let root_node = tree.root_node();
     
-    // Handle class methods manually (keep existing logic)
     for node in root_node.children(&mut tree.walk()) {
         if node.kind() == "class_declaration" {
             let class_body = node.child_by_field_name("body");
@@ -247,7 +245,6 @@ fn search_in_all_functions(node: &tree_sitter::Node, content: &str, pattern: &Re
     Ok(())
 }
 
-// Updated basic_search with early string filtering for performance
 fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool, exclude_dirs: &str) -> Result<()> {
     let pattern = Regex::new(query);
     let mut parser = TreeSitterParser::new();
