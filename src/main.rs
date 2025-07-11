@@ -35,6 +35,10 @@ struct Cli {
     /// Return the entire method if method name matches the query
     #[arg(long, short, value_name = "METHOD_SEARCH", default_value_t = false, conflicts_with_all = ["grep", "print_method"])]
     method_search: bool,
+
+    /// Exclude directories from search
+    #[arg(long, short, value_name = "EXCLUDE_DIRS", default_value = "vendor,cache,logs")]
+    exclude_dirs: String,
 }
 
 #[derive(Debug)]
@@ -63,7 +67,7 @@ fn main() -> Result<()> {
 
     let search_mode = SearchMode::from(&args);
 
-    search(&args.query, &args.dir, &args.file, search_mode, &args.print_method)?;
+    search(&args.query, &args.dir, &args.file, search_mode, &args.print_method, &args.exclude_dirs)?;
 
     println!("Search completed successfully.");
     Ok(())
@@ -80,14 +84,23 @@ fn validate_args(args: &Cli) -> Result<()> {
         return Err(anyhow::anyhow!("Cannot use both --grep and --method-search at the same time"));
     }
 
+    // make sure exclude_dirs is a valid comma-separated list
+    if !args.exclude_dirs.is_empty() {
+        let dirs: Vec<&str> = args.exclude_dirs.split(',').collect();
+        if dirs.is_empty() || dirs.iter().any(|d| d.trim().is_empty()) {
+            eprintln!("Error: Invalid exclude_dirs format. Use a comma-separated list.");
+            return Err(anyhow::anyhow!("Invalid exclude_dirs format. Use a comma-separated list."));
+        }
+    }
+
     Ok(())
 }
 
-fn search(query: &str, dir: &str, file: &str, mode: SearchMode, print_method: &bool) -> Result<()> {
+fn search(query: &str, dir: &str, file: &str, mode: SearchMode, print_method: &bool, exclude_dirs: &str) -> Result<()> {
     match mode {
-        SearchMode::Basic => basic_search(query, dir, file, print_method),
-        SearchMode::Grep => grep_search(query, dir, file),
-        SearchMode::MethodSearch => method_search(query, dir, file),
+        SearchMode::Basic => basic_search(query, dir, file, print_method, exclude_dirs),
+        SearchMode::Grep => grep_search(query, dir, file, exclude_dirs),
+        SearchMode::MethodSearch => method_search(query, dir, file, exclude_dirs),
     }
 }
 
@@ -235,7 +248,7 @@ fn search_in_all_functions(node: &tree_sitter::Node, content: &str, pattern: &Re
 }
 
 // Updated basic_search with early string filtering for performance
-fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool) -> Result<()> {
+fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool, exclude_dirs: &str) -> Result<()> {
     let pattern = Regex::new(query);
     let mut parser = TreeSitterParser::new();
     parser.set_language(unsafe { tree_sitter_php() })?;
@@ -243,9 +256,22 @@ fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool) -> Resu
         eprintln!("Invalid regex pattern: {}", e);
         return Err(anyhow::anyhow!("Invalid regex pattern"));
     }
+    let exclude_dirs: Vec<&str> = exclude_dirs.split(',').map(|s| s.trim()).collect();
 
     for entry in WalkDir::new(dir)
         .into_iter()
+        .filter_entry(|e| {
+            if let Some(path_str) = e.path().to_str() {
+                let relative_path = e.path().strip_prefix(dir).unwrap_or(e.path()).to_string_lossy();
+                !exclude_dirs.iter().any(|excluded_dir| {
+                    path_str.contains(excluded_dir) || 
+                    relative_path.starts_with(excluded_dir) ||
+                    path_str.ends_with(excluded_dir)
+                })
+            } else {
+                true
+            }
+        })
         .filter_map(Result::ok)
         .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("php"))
         .filter(|e| e.file_name().to_string_lossy().contains(file)) {
@@ -277,7 +303,7 @@ fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool) -> Resu
 
 // Searches method name match and prints the entire method body
 // This is useful for finding methods by name and seeing their implementation
-fn method_search(query: &str, dir: &str, file: &str) -> Result<()> {
+fn method_search(query: &str, dir: &str, file: &str, exclude_dirs: &str) -> Result<()> {
     let pattern = Regex::new(query);
     let mut parser = TreeSitterParser::new();
     parser.set_language(unsafe { tree_sitter_php() })?;
@@ -286,8 +312,22 @@ fn method_search(query: &str, dir: &str, file: &str) -> Result<()> {
         return Err(anyhow::anyhow!("Invalid regex pattern"));
     }
 
+    let exclude_dirs: Vec<&str> = exclude_dirs.split(',').map(|s| s.trim()).collect();
+
     for entry in WalkDir::new(dir)
         .into_iter()
+        .filter_entry(|e| {
+            if let Some(path_str) = e.path().to_str() {
+                let relative_path = e.path().strip_prefix(dir).unwrap_or(e.path()).to_string_lossy();
+                !exclude_dirs.iter().any(|excluded_dir| {
+                    path_str.contains(excluded_dir) || 
+                    relative_path.starts_with(excluded_dir) ||
+                    path_str.ends_with(excluded_dir)
+                })
+            } else {
+                true
+            }
+        })
         .filter_map(Result::ok)
         .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("php"))
         .filter(|e| e.file_name().to_string_lossy().contains(file)) {
@@ -428,15 +468,29 @@ fn find_all_functions(node: &tree_sitter::Node, content: &str, query: &str, path
 }
 
 // Mimics grep search, searching for the query in all files
-fn grep_search(query: &str, dir: &str, file: &str) -> Result<()> {
+fn grep_search(query: &str, dir: &str, file: &str, exclude_dirs: &str) -> Result<()> {
     let pattern = Regex::new(query);
     if let Err(e) = pattern {
         eprintln!("Invalid regex pattern: {}", e);
         return Err(anyhow::anyhow!("Invalid regex pattern"));
     }
 
+    let exclude_dirs: Vec<&str> = exclude_dirs.split(',').map(|s| s.trim()).collect();
+
     for entry in WalkDir::new(dir)
         .into_iter()
+        .filter_entry(|e| {
+            if let Some(path_str) = e.path().to_str() {
+                let relative_path = e.path().strip_prefix(dir).unwrap_or(e.path()).to_string_lossy();
+                !exclude_dirs.iter().any(|excluded_dir| {
+                    path_str.contains(excluded_dir) || 
+                    relative_path.starts_with(excluded_dir) ||
+                    path_str.ends_with(excluded_dir)
+                })
+            } else {
+                true
+            }
+        })
         .filter_map(Result::ok)
         .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("php"))
         .filter(|e| e.file_name().to_string_lossy().contains(file)) {
