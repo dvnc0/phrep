@@ -283,11 +283,12 @@ fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool, exclude
                 }
             };
             
-            if !content.contains(query) {
+            let reg_pattern = &pattern.clone().unwrap();
+            
+            if !reg_pattern.is_match(&content) {
                 continue;
             }
-            
-            let reg_pattern = &pattern.clone().unwrap();
+
             if let Err(e) = search_in_function_body(&content, &reg_pattern, &mut parser, &path, print_method) {
                 eprintln!("Warning: Error processing file '{}': {}", path.display(), e);
                 continue;
