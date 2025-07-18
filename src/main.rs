@@ -285,7 +285,7 @@ fn basic_search(query: &str, dir: &str, file: &str, print_method: &bool, exclude
             
             let reg_pattern = &pattern.clone().unwrap();
             
-            if !reg_pattern.is_match(&content) {
+            if !content.lines().any(|line| reg_pattern.is_match(line)) {
                 continue;
             }
 
