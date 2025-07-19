@@ -153,7 +153,9 @@ fn search_in_function_body(content: &str, pattern: &Regex, parser: &mut TreeSitt
                             }
                         };
                         let start_row = body_node.start_position().row;
-                        for (i, line) in body_text.lines().enumerate() {
+                        let start = body_node.start_position().row;
+                        let end = body_node.end_position().row;
+                        for (i, line) in content.lines().enumerate().skip(start + 1).take(end - start + 1) {
                             if pattern.is_match(line) {
                                 let filename = format_filename(path);
                                 let file_name_styled = filename.bold().blue();
