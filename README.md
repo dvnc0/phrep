@@ -26,12 +26,15 @@ Prebuilt binaries are available in the build directory at https://tools.dvnc0.co
 - phrep-v0.1.2-x86_64-linux
 - phrep-v0.1.3-x86_64-linux
 - phrep-v0.2.0-x86_64-linux
+- phrep-v0.2.1-x86_64-linux
+- phrep-v0.2.2-x86_64-linux
+- phrep-v0.2.3-x86_64-linux
 
 To download the newest version use:
 
 ```bash
-wget https://tools.dvnc0.com/phrep-v0.2.0-x86_64-linux
-mv phrep-v0.2.0-x86_64-linux /usr/local/bin/phrep
+wget https://tools.dvnc0.com/phrep-v0.2.3-x86_64-linux
+mv phrep-v0.2.3-x86_64-linux /usr/local/bin/phrep
 chmod +x /usr/local/bin/phrep
 ```
 
